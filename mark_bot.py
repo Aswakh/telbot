@@ -1,85 +1,105 @@
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler
+import os
+import logging
+from telegram.ext import (
+    Updater,
+    CommandHandler,
+    MessageHandler,
+    Filters,
+    ConversationHandler,
+)
 
-# States for conversation
+# ── 1. Logging (optional but handy) ──────────────────────────────────────────────
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
+
+# ── 2. Conversation states ─────────────────────────────────────────────────────
 MID1, MID2, WEEKLY = range(3)
 
-user_data = {}
-
+# ── 3. Handlers ────────────────────────────────────────────────────────────────
 def start(update, context):
-    update.message.reply_text("👋 Welcome to the Mark Estimator Bot!\n\nPlease enter Mid-1 marks (Short+Descriptive) like: 9 22")
+    update.message.reply_text(
+        "👋 Hi! Send me your Mid‑1 marks (short 10 + descriptive 30) "
+        "as two numbers, e.g. 9 22"
+    )
     return MID1
 
 def get_mid1(update, context):
     try:
-        s, d = map(int, update.message.text.strip().split())
-        user_data['mid1'] = s + d / 2
-        update.message.reply_text("Now enter Mid-2 marks (Short+Descriptive) like: 8 20")
+        s, d = map(float, update.message.text.strip().split())
+        context.user_data["mid1"] = s + d / 2  # convert to /25
+        update.message.reply_text("Now send Mid‑2 marks, e.g. 8 20")
         return MID2
-    except:
-        update.message.reply_text("Invalid format! Please enter two numbers separated by space.")
+    except Exception:
+        update.message.reply_text("❌ Please send two numbers separated by space.")
         return MID1
 
 def get_mid2(update, context):
     try:
-        s, d = map(int, update.message.text.strip().split())
-        user_data['mid2'] = s + d / 2
-        update.message.reply_text("Great! Now enter weekly test average (out of 5):")
+        s, d = map(float, update.message.text.strip().split())
+        context.user_data["mid2"] = s + d / 2
+        update.message.reply_text("Weekly‑test average (out of 5)?")
         return WEEKLY
-    except:
-        update.message.reply_text("Invalid format! Please enter two numbers separated by space.")
+    except Exception:
+        update.message.reply_text("❌ Please send two numbers separated by space.")
         return MID2
 
 def get_weekly(update, context):
     try:
         weekly = float(update.message.text.strip())
-        mid1, mid2 = user_data['mid1'], user_data['mid2']
-        
-        # Weighted average
-        if mid1 >= mid2:
-            mid_score = 0.8 * mid1 + 0.2 * mid2
-        else:
-            mid_score = 0.8 * mid2 + 0.2 * mid1
-        
-        internal = mid_score + weekly
-        required_in_sem = max(28, 50 - internal)
+        m1 = context.user_data["mid1"]
+        m2 = context.user_data["mid2"]
 
-        result = f"📊 Internal Marks: {internal:.2f}/30\n"
-        if required_in_sem <= 70:
-            result += f"✅ You need at least {required_in_sem:.2f}/70 in Sem Exam to PASS."
-        else:
-            result += f"❌ You need {required_in_sem:.2f} marks, which is more than 70. Not possible to pass."
+        # weighted mid score (/25)
+        mid_score = 0.8 * max(m1, m2) + 0.2 * min(m1, m2)
+        internal = mid_score + weekly                     # /30
+        needed_in_sem = max(28, 50 - internal)            # ≥28 rule
 
-        update.message.reply_text(result)
+        if needed_in_sem <= 70:
+            reply = (
+                f"📊 Internal: {internal:.2f}/30\n"
+                f"✅ Need at least {needed_in_sem:.2f}/70 in the sem exam to pass."
+            )
+        else:
+            reply = (
+                f"📊 Internal: {internal:.2f}/30\n"
+                f"❌ Even 70/70 won’t reach 50 total – not possible to pass."
+            )
+        update.message.reply_text(reply)
         return ConversationHandler.END
-    except:
-        update.message.reply_text("Enter a valid number for weekly test marks.")
+    except Exception:
+        update.message.reply_text("❌ Please send a valid number (0‑5).")
         return WEEKLY
 
 def cancel(update, context):
-    update.message.reply_text("❌ Cancelled.")
+    update.message.reply_text("Conversation cancelled.")
     return ConversationHandler.END
 
-def main():
-    TOKEN = "7746502278:AAG890T6tMvjcwDZKLjpo-6mweZ4mJsZJhk"
-    updater = Updater(TOKEN, use_context=True)
+# ── 4. Main ────────────────────────────────────────────────────────────────────
+def main() -> None:
+    token = os.getenv("BOT_TOKEN")
+    if not token:
+        raise RuntimeError("BOT_TOKEN environment variable not set!")
+
+    updater = Updater(token, use_context=True)
     dp = updater.dispatcher
 
-    conv_handler = ConversationHandler(
+    conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            MID1: [MessageHandler(Filters.text & ~Filters.command, get_mid1)],
-            MID2: [MessageHandler(Filters.text & ~Filters.command, get_mid2)],
+            MID1:   [MessageHandler(Filters.text & ~Filters.command, get_mid1)],
+            MID2:   [MessageHandler(Filters.text & ~Filters.command, get_mid2)],
             WEEKLY: [MessageHandler(Filters.text & ~Filters.command, get_weekly)],
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    dp.add_handler(conv_handler)
+    dp.add_handler(conv)
 
-    updater.start_polling()
-    print("🤖 Bot is running...")
+    updater.start_polling()   # keeps bot alive (fine on Render free)
     updater.idle()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
-
